@@ -1,0 +1,12 @@
+/Debug
+/bin
+/obj
+/.vs
+/ARM
+/packages
+/PCMApp/Generated Files
+/PCMApp/Assets
+/DWMTestApp/Debug
+/DWMTestAppProject/bin
+/DWMTestAppProject/images
+/DWMTestAppProject/obj

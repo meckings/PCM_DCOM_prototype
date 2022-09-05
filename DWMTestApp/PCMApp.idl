@@ -1,0 +1,9 @@
+namespace DWMTestApp
+{
+    [default_interface]
+    runtimeclass PCMApp : Windows.UI.Xaml.Controls.Page
+    {
+        PCMApp();
+        Int32 MyProperty;
+    }
+}

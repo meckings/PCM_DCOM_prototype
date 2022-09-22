@@ -7,8 +7,8 @@
 #include <windows.ui.xaml.hosting.desktopwindowxamlsource.h>
 #include <winrt/windows.ui.xaml.controls.h>
 #include <winrt/Windows.ui.xaml.media.h>
+#include <winrt/windows.ui.xaml.shapes.h>
 #include <winrt/Windows.UI.Core.h>
-#include <winrt/PCMApp.h>
 #include "DCompPCM.h"
 
 using namespace winrt;

@@ -28,315 +28,443 @@ EXTERN_C IMAGE_DOS_HEADER __ImageBase;
 namespace DWMTestApp
 {
     DComPCM::DComPCM() :
-        m_hwnd(NULL),
-        m_hBitmap(NULL),
-        m_pDCompDevice(nullptr),
-        m_pDCompTarget(nullptr),
-        m_pD3D11Device(nullptr) 
+        m_hInstance(NULL),
+        m_hMainWindow(NULL),
+        m_textBoxHwnd(NULL)
     {}
 
     DComPCM::~DComPCM()
     {
-        SafeRelease(&m_pDCompDevice);
-        SafeRelease(&m_pDCompTarget);
-        SafeRelease(&m_pD3D11Device);
+        
     }
 
-    HRESULT DComPCM::Initialize(HWND hwnd)
+    HRESULT DComPCM::Initialize(HINSTANCE hInstance, HWND main, HWND child, HWND textBox)
     {
-        HRESULT hr;
+        m_hInstance = hInstance;
+        HRESULT hr = InitializeMainWindow(main);
 
-        // Create the application window.
-        //
-        // Because the CreateWindow function takes its size in pixels, we
-        // obtain the system DPI and use it to scale the window size.
-        int dpiX = 0;
-        int dpiY = 0;
-        HDC hdc = GetDC(NULL);
-        if (hdc)
-        {
-            dpiX = GetDeviceCaps(hdc, LOGPIXELSX);
-            dpiY = GetDeviceCaps(hdc, LOGPIXELSY);
-            ReleaseDC(NULL, hdc);
-        }
-
-        m_hwnd = hwnd;
-        /*m_hwnd = CreateWindowEx(
-            0,
-            L"DirectCompDemoApp",
-            L"DirectComposition Demo Application",
-            WS_OVERLAPPEDWINDOW,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            static_cast<UINT>(ceil(640.f * dpiX / 96.f)),
-            static_cast<UINT>(ceil(480.f * dpiY / 96.f)),
-            NULL,
-            NULL,
-            HINST_THISCOMPONENT,
-            NULL
-        );*/
-
-        hr = m_hwnd ? S_OK : E_FAIL;
         if (SUCCEEDED(hr))
         {
-            // Initialize DirectComposition resources, such as the
-            // device object and composition target object.
-            hr = InitializeDirectCompositionDevice();
+            hr = InitializeLayeredChildWindows(child, textBox);
         }
 
         if (SUCCEEDED(hr))
         {
-            hr = CreateResources();
+            hr = MoveLayeredChildWindows();
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            hr = CreateD3D11Device();
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            hr = CreateDCompositionDevice();
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            hr = CreateDCompositionRenderTarget();
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            hr = CreateDCompositionVisualTree();
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            hr = CreateTransforms();
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            // Commit the batch.
+            hr = m_pDevice->Commit();
         }
 
         return hr;
     }
 
-    /******************************************************************
-    *                                                                 *
-    *  This method creates the DirectComposition device object and    *
-    *  and the composition target object. These objects endure for    *
-    *  the lifetime of the application.                               *
-    *                                                                 *
-    ******************************************************************/
-
-    HRESULT DComPCM::InitializeDirectCompositionDevice()
+    // Creates the main application window.
+    HRESULT DComPCM::InitializeMainWindow(HWND hwnd)
     {
         HRESULT hr = S_OK;
+
+        m_hMainWindow = hwnd;
+        ShowWindow(m_hMainWindow, SW_SHOWDEFAULT);
+        return hr;
+    }
+
+    // Creates the layered child windows.
+    HRESULT DComPCM::InitializeLayeredChildWindows(HWND child, HWND textBox)
+    {
+        HRESULT hr = S_OK;
+
+        m_hControlChildWindow = child;
+        m_textBoxHwnd = textBox;
+
+        if (SUCCEEDED(hr))
+        {
+            ShowWindow(m_hControlChildWindow, SW_SHOWDEFAULT);
+        }
+
+        return hr;
+    }
+
+    HRESULT DComPCM::MoveLayeredChildWindows()
+    {
+        HRESULT hr = S_OK;
+
+        RECT rcClient;
+        GetClientRect(m_hMainWindow, &rcClient);
+
+        // Move the Control window to its location.
+        if (!MoveWindow(m_hControlChildWindow,  // Window
+            rcClient.left,                // New position of the left side of the window
+            rcClient.top,                 // New position of the top side of the window
+            rcClient.right,               // New width
+            rcClient.bottom,              // New height
+            TRUE))                        // Repaint the window
+        {
+            hr = HRESULT_FROM_WIN32(GetLastError());
+        }
+
+        return hr;
+    }
+
+    HRESULT DComPCM::CreateD3D11Device()
+    {
+        HRESULT hr = S_OK;
+
+        D3D_DRIVER_TYPE driverTypes[] =
+        {
+            D3D_DRIVER_TYPE_HARDWARE,
+            D3D_DRIVER_TYPE_WARP,
+        };
 
         D3D_FEATURE_LEVEL featureLevelSupported;
 
-        // Create the D3D device object. The D3D11_CREATE_DEVICE_BGRA_SUPPORT
-        // flag enables rendering on surfaces using Direct2D.
-        hr = D3D11CreateDevice(
-            nullptr,
-            D3D_DRIVER_TYPE_HARDWARE,
-            NULL,
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-            NULL,
-            0,
-            D3D11_SDK_VERSION,
-            &m_pD3D11Device,
-            &featureLevelSupported,
-            nullptr);
-
-        IDXGIDevice* pDXGIDevice = nullptr;
-
-        // Check the result of calling D3D11CreateDriver.
-        if (SUCCEEDED(hr))
+        for (int i = 0; i < sizeof(driverTypes) / sizeof(driverTypes[0]); ++i)
         {
-            // Create the DXGI device used to create bitmap surfaces.
-            hr = m_pD3D11Device->QueryInterface(&pDXGIDevice);
-        }
+            CComPtr<ID3D11Device> d3d11Device;
+            CComPtr<ID3D11DeviceContext> d3d11DeviceContext;
 
-        if (SUCCEEDED(hr))
-        {
-            // Create the DirectComposition device object.
-            hr = DCompositionCreateDevice(pDXGIDevice, __uuidof(IDCompositionDevice), reinterpret_cast<void**>(&m_pDCompDevice));
-        }
-        if (SUCCEEDED(hr))
-        {
-            // Create the composition target object based on the specified application window.
-            hr = m_pDCompDevice->CreateTargetForHwnd(m_hwnd, TRUE, &m_pDCompTarget);
-        }
+            hr = D3D11CreateDevice(
+                nullptr,
+                driverTypes[i],
+                NULL,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                NULL,
+                0,
+                D3D11_SDK_VERSION,
+                &d3d11Device,
+                &featureLevelSupported,
+                &d3d11DeviceContext);
 
-        SafeRelease(&pDXGIDevice);
-
-        return hr;
-    }
-
-    /******************************************************************
-    *                                                                 *
-    *  This method creates the GDI bitmap that the application gives  *
-    *  to DirectComposition to be composed.                           *
-    *                                                                 *
-    ******************************************************************/
-
-    HRESULT DComPCM::CreateResources()
-    {
-        HRESULT hr = S_OK;
-
-        hr = LoadResourceGDIBitmap(L"Logo", m_hBitmap);
-
-        return hr;
-    }
-
-    /******************************************************************
-    *                                                                 *
-    *  Discard device-specific resources.                             *
-    *                                                                 *
-    ******************************************************************/
-
-    void DComPCM::DiscardResources()
-    {
-        DeleteObject(m_hBitmap);
-    }
-
-    /******************************************************************
-    *                                                                 *
-    *  Called whenever the user clicks in client area of the main     *
-    *  window. This method builds a simple visual tree and passes it  *
-    *  to DirectComposition.
-    *                                                                 *
-    ******************************************************************/
-
-    HRESULT DComPCM::OnClientClick()
-    {
-        HRESULT hr = S_OK;
-        float xOffset = 20; // horizonal position of visual
-        float yOffset = 20; // vertical position of visual
-
-        IDCompositionVisual* pVisual = nullptr;
-
-        // Create a visual object.          
-        hr = m_pDCompDevice->CreateVisual(&pVisual);
-
-        IDCompositionSurface* pSurface = nullptr;
-
-        if (SUCCEEDED(hr))
-        {
-            // Create a composition surface and render a GDI bitmap 
-            // to the surface.
-            hr = MyCreateGDIRenderedDCompSurface(m_hBitmap, &pSurface);
-        }
-
-        if (SUCCEEDED(hr))
-        {
-            // Set the bitmap content of the visual. 
-            hr = pVisual->SetContent(pSurface);
-        }
-
-        if (SUCCEEDED(hr))
-        {
-            // Set the horizontal and vertical position of the visual relative
-            // to the upper-left corner of the composition target window.
-            hr = pVisual->SetOffsetX(xOffset);
             if (SUCCEEDED(hr))
             {
-                hr = pVisual->SetOffsetY(yOffset);
+                _d3d11Device = d3d11Device.Detach();
+                _d3d11DeviceContext = d3d11DeviceContext.Detach();
+
+                break;
             }
         }
-
-        if (SUCCEEDED(hr))
-        {
-            // Set the visual to be the root of the visual tree.          
-            hr = m_pDCompTarget->SetRoot(pVisual);
-        }
-
-        if (SUCCEEDED(hr))
-        {
-            // Commit the visual to be composed and displayed.
-            hr = m_pDCompDevice->Commit();
-        }
-
-        // Free the visual. 
-        SafeRelease(&pVisual);
 
         return hr;
     }
 
-    /******************************************************************
-    *                                                                 *
-    *  This method loads the specified GDI bitmap from the            *
-    *  application resources, creates a new bitmap that is in a       *
-    *  format that DirectComposition can use, and copies the contents *
-    *  of the original bitmap to the new bitmap.                      *
-    *                                                                 *
-    ******************************************************************/
-    HRESULT DComPCM::LoadResourceGDIBitmap(PCWSTR resourceName, HBITMAP& hbmp)
+    HRESULT DComPCM::CreateDCompositionDevice()
     {
-        hbmp = static_cast<HBITMAP>(LoadImageW(HINST_THISCOMPONENT, resourceName,
-            IMAGE_BITMAP, 0, 0, LR_DEFAULTCOLOR));
+        HRESULT hr = (_d3d11Device == nullptr) ? E_UNEXPECTED : S_OK;
 
-        return hbmp ? S_OK : E_FAIL;
+        CComPtr<IDXGIDevice> dxgiDevice;
+
+        if (SUCCEEDED(hr))
+        {
+            hr = _d3d11Device->QueryInterface(&dxgiDevice);
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            hr = DCompositionCreateDevice(dxgiDevice, __uuidof(IDCompositionDevice), reinterpret_cast<void**>(&m_pDevice));
+        }
+
+        return hr;
     }
 
-    // MyCreateGDIRenderedDCompSurface - Creates a DirectComposition surface and 
-    //   copies the bitmap to the surface. 
-    //
-    // Parameters:
-    //   hBitmap - a GDI bitmap.
-    //   ppSurface - the composition surface object.
-    //                                                                 
-    HRESULT DComPCM::MyCreateGDIRenderedDCompSurface(HBITMAP hBitmap,
-        IDCompositionSurface** ppSurface)
+    HRESULT DComPCM::CreateDCompositionRenderTarget()
+    {
+        HRESULT hr = ((m_pDevice == nullptr) || (m_hMainWindow == NULL)) ? E_UNEXPECTED : S_OK;
+
+        if (SUCCEEDED(hr))
+        {
+            // FALSE puts the composition content beneath the Win32 buttons.
+            hr = m_pDevice->CreateTargetForHwnd(m_hMainWindow, FALSE, &m_pHwndRenderTarget);
+        }
+
+        return hr;
+    }
+
+    HRESULT DComPCM::CreateDCompositionVisualTree()
+    {
+        HRESULT hr = ((m_pDevice == nullptr) || (m_hMainWindow == NULL)) ? E_UNEXPECTED : S_OK;
+
+        if (SUCCEEDED(hr))
+        {
+            // Create the root visual.
+            hr = m_pDevice->CreateVisual(&m_pRootVisual);
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            // Make the visual the root of the tree.
+            hr = m_pHwndRenderTarget->SetRoot(m_pRootVisual);
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            // Make the visual the root of the tree.
+            hr = m_pDevice->CreateVisual(&m_pControlChildVisual);
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            // Make the visual the root of the tree.
+            hr = m_pRootVisual->AddVisual(m_pControlChildVisual, TRUE, NULL);
+        }
+        return hr;
+    }
+
+    HRESULT DComPCM::CreateTransforms()
+    {
+        RECT rcClient;
+
+        GetClientRect(m_hMainWindow, &rcClient);
+
+        // Create a translate transform for the control child visual.
+        HRESULT hr = m_pDevice->CreateTranslateTransform(&m_pControlTranslateTransform);
+
+        if (SUCCEEDED(hr))
+        {
+            // Set the offset of x-axis of the control child visual
+            hr = m_pControlChildVisual->SetOffsetX(0.0f);
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            // Set the offset of y-axis of the control child visual
+            hr = m_pControlChildVisual->SetOffsetY(0.0f);
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            // Set the offset of x-axis of control translate transform
+            hr = m_pControlTranslateTransform->SetOffsetX(0.0f);
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            // Set the offset of y-axis of control translate transform
+            hr = m_pControlTranslateTransform->SetOffsetY(0.0f);
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            // Apply translate transform to the control child visual.
+            hr = m_pControlChildVisual->SetTransform(m_pControlTranslateTransform);
+        }
+
+        return hr;
+    }
+
+    // Handles the WM_COMMAND message.
+    HRESULT DComPCM::OnCommand(int id)
     {
         HRESULT hr = S_OK;
 
-        int bitmapWidth = 0;
-        int bitmapHeight = 0;
-        int bmpSize = 0;
-        BITMAP bmp = { };
-        HBITMAP hBitmapOld = NULL;
-
-        HDC hSurfaceDC = NULL;
-        HDC hBitmapDC = NULL;
-
-        IDXGISurface1* pDXGISurface = nullptr;
-        IDCompositionSurface* pDCSurface = nullptr;
-        POINT pointOffset = { };
-
-        if (ppSurface == nullptr)
-            return E_INVALIDARG;
-
-        // Get information about the bitmap.
-        bmpSize = GetObject(hBitmap, sizeof(BITMAP), &bmp);
-
-        hr = bmpSize ? S_OK : E_FAIL;
-        if (SUCCEEDED(hr))
+        int wmId = LOWORD(id);
+        switch (wmId)
         {
-            // Save the bitmap dimensions.
-            bitmapWidth = bmp.bmWidth;
-            bitmapHeight = bmp.bmHeight;
-
-            // Create a DirectComposition-compatible surface that is the same size 
-            // as the bitmap. The DXGI_FORMAT_B8G8R8A8_UNORM flag is required for 
-            // rendering on the surface using GDI via GetDC.
-            hr = m_pDCompDevice->CreateSurface(bitmapWidth, bitmapHeight,
-                DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_IGNORE, &pDCSurface);
+        case IDC_TEXTBOX:
+            hr = DoPCM();
+            break;
         }
-
-        if (SUCCEEDED(hr))
-        {
-            // Begin rendering to the surface.
-            hr = pDCSurface->BeginDraw(NULL, __uuidof(IDXGISurface1),
-                reinterpret_cast<void**>(&pDXGISurface), &pointOffset);
-        }
-
-        if (SUCCEEDED(hr))
-        {
-            // Get the device context (DC) for the surface.
-            hr = pDXGISurface->GetDC(FALSE, &hSurfaceDC);
-        }
-
-        if (SUCCEEDED(hr))
-        {
-            // Create a compatible DC and select the surface 
-            // into the DC.
-            hBitmapDC = CreateCompatibleDC(hSurfaceDC);
-            if (hBitmapDC != NULL)
-            {
-                hBitmapOld = (HBITMAP)SelectObject(hBitmapDC, hBitmap);
-                BitBlt(hSurfaceDC, pointOffset.x, pointOffset.y,
-                    bitmapWidth, bitmapHeight, hBitmapDC, 0, 0, SRCCOPY);
-
-                if (hBitmapOld)
-                {
-                    SelectObject(hBitmapDC, hBitmapOld);
-                }
-                DeleteDC(hBitmapDC);
-            }
-
-            pDXGISurface->ReleaseDC(NULL);
-        }
-
-        // End the rendering.
-        pDCSurface->EndDraw();
-        *ppSurface = pDCSurface;
-
-        // Call an application-defined macro to free the surface pointer.
-        SafeRelease(&pDXGISurface);
 
         return hr;
+    }
+
+    HRESULT DComPCM::DoPCM() {
+
+        HRESULT hr{ S_OK };
+        if (m_textBoxHwnd) {
+
+            RECT cursorRect;
+            GetCursorPos((LPPOINT)&cursorRect);
+            POINT point;
+            GetCursorPos(&point);
+
+            RECT rect;
+            GetWindowRect(m_textBoxHwnd, &rect);
+
+            MapWindowPoints(HWND_DESKTOP, GetParent(m_textBoxHwnd), (LPPOINT)&rect, 2);
+            MapWindowPoints(HWND_DESKTOP, GetParent(m_textBoxHwnd), (LPPOINT)&cursorRect, 2);
+            ScreenToClient(GetParent(m_textBoxHwnd), &point);
+
+            if (!m_pTextboxSurfaceTile) {
+
+                hr = m_pDevice->CreateSurfaceFromHwnd(m_textBoxHwnd, &m_pTextboxSurfaceTile);
+
+                if (SUCCEEDED(hr))
+                {
+                    // Create the TextBox child visual.
+                    hr = m_pDevice->CreateVisual(&m_pTextboxChildVisual);
+                }
+
+                if (SUCCEEDED(hr))
+                {
+                    // Set the content of the text box child visual.
+                    hr = m_pTextboxChildVisual->SetContent(m_pTextboxSurfaceTile);
+                }
+
+                if (SUCCEEDED(hr))
+                {
+                    // Add the textbox child visual to the visual tree.
+                    hr = m_pRootVisual->AddVisual(m_pTextboxChildVisual, TRUE, NULL);
+                }
+
+                if (SUCCEEDED(hr))
+                {
+                    // Create a translate transform for the control child visual. Without creating a transform the visual won't be seen
+                    hr = m_pDevice->CreateTranslateTransform(&m_pTextboxTranslateTransform);
+                }
+
+                if (SUCCEEDED(hr))
+                {
+                    float height = rect.bottom - rect.top;
+                    float margin = 5;
+                    m_pTextboxChildVisual->SetOffsetY(rect.top - height - margin);
+                    m_pTextboxChildVisual->SetOffsetX(rect.left);
+
+                    // Set the offset of x-axis of control translate transform
+                    hr = m_pTextboxTranslateTransform->SetOffsetX(0.0f);
+
+                    // Set the offset of y-axis of control translate transform
+                    hr = m_pTextboxTranslateTransform->SetOffsetY(0.0f);
+                }
+
+                if (SUCCEEDED(hr))
+                {
+                    // Create the TextBox child visual.
+                    hr = m_pDevice->CreateRectangleClip(&m_rectangleClip);
+                }
+            }
+            else {
+
+                hr = m_pRootVisual->RemoveVisual(m_pTextboxChildVisual);
+
+                if (SUCCEEDED(hr))
+                {
+                    // Add the textbox child visual to the visual tree.
+                    hr = m_pRootVisual->AddVisual(m_pTextboxChildVisual, TRUE, NULL);
+                }
+
+                /*m_pRootVisual->RemoveVisual(m_pTextboxChildVisual);
+                m_pTextboxChildVisual = nullptr;
+                m_pTextboxTranslateTransform = nullptr;
+                m_pTextboxSurfaceTile = nullptr;
+                m_pRootVisual->SetTransform(m_pTextboxTranslateTransform);
+
+                m_pDevice->Commit();*/
+            }
+            if (SUCCEEDED(hr))
+            {
+                float height = rect.bottom - rect.top;
+                float width = rect.right - rect.left;
+
+                m_rectangleClip->SetTop(0.0f);
+                m_rectangleClip->SetLeft(cursorRect.left - rect.left);
+                m_rectangleClip->SetRight(cursorRect.left - rect.left + 50);
+                m_rectangleClip->SetBottom(height);
+
+                hr = m_pTextboxChildVisual->SetClip(m_rectangleClip);
+            }
+            if (SUCCEEDED(hr))
+            {
+                // Apply translate transform to the control child visual.
+                hr = m_pRootVisual->SetTransform(m_pTextboxTranslateTransform);
+            }
+
+            if (SUCCEEDED(hr))
+            {
+                m_pDevice->Commit();
+            }
+        }
+        return hr;
+    }
+
+    VOID DComPCM::Destroy()
+    {
+        DestroyTransforms();
+        DestroyMainWindow();
+        DestroyLayeredChildWindows();
+        DestroyDCompositionVisualTree();
+        DestroyDCompositionRenderTarget();
+        DestroyDCompositionDevice();
+        DestroyD3D11Device();
+        CoUninitialize();
+    }
+
+    VOID DComPCM::DestroyTransforms()
+    {
+        m_pControlTranslateTransform = nullptr;
+
+        m_pTextboxTranslateTransform = nullptr;
+    }
+
+    VOID DComPCM::DestroyMainWindow()
+    {
+        if (m_hMainWindow != NULL)
+        {
+            DestroyWindow(m_hMainWindow);
+            m_hMainWindow = NULL;
+        }
+    }
+
+    VOID DComPCM::DestroyLayeredChildWindows()
+    {
+        if (m_hControlChildWindow != NULL)
+        {
+            DestroyWindow(m_hControlChildWindow);
+            m_hControlChildWindow = NULL;
+        }
+
+        if (m_textBoxHwnd != NULL)
+        {
+            DestroyWindow(m_textBoxHwnd);
+            m_textBoxHwnd = NULL;
+        }
+    }
+
+    VOID DComPCM::DestroyDCompositionVisualTree()
+    {
+        m_pTextboxSurfaceTile = nullptr;
+    }
+
+    VOID DComPCM::DestroyDCompositionRenderTarget()
+    {
+        m_pHwndRenderTarget = nullptr;
+    }
+
+    VOID DComPCM::DestroyDCompositionDevice()
+    {
+        m_pDevice = nullptr;
+    }
+
+    VOID DComPCM::DestroyD3D11Device()
+    {
+        _d3d11DeviceContext = nullptr;
+        _d3d11Device = nullptr;
     }
 }

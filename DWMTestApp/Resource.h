@@ -13,6 +13,14 @@
 #define IDI_SMALL				108
 #define IDC_DWMTESTAPP			109
 #define IDC_MYICON				2
+#define IDC_TEXTBOX				1001
+#define IDC_BUTTON				1002
+#define IDC_TEXTBLOCK			1003
+
+#define IDS_FONT_TYPEFACE				111
+#define IDS_FONT_HEIGHT_LOGO			112
+#define IDS_FONT_HEIGHT_TITLE			113
+#define IDS_FONT_HEIGHT_DESCRIPTION		114
 #ifndef IDC_STATIC
 #define IDC_STATIC				-1
 #endif

@@ -1,9 +1,0 @@
-namespace PCMApp
-{
-    [default_interface]
-    runtimeclass PCMControl : Windows.UI.Xaml.Controls.UserControl
-    {
-        PCMControl();
-        Int32 MyProperty;
-    }
-}
